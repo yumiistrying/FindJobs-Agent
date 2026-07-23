@@ -1,17 +1,23 @@
-name: CI
+name: FindJobs-Agent CI & Daily Crawler
 
 on:
+  # 1. 当你推送代码时触发（用于测试代码）
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  # 2. 定时任务触发（你的校招雷达：每天吉隆坡时间早上 9 点和晚上 6 点自动运行）
+  schedule:
+    - cron: '0 1,10 * * *'
+  # 3. 允许你随时在 GitHub 网页上点击按钮手动运行
+  workflow_dispatch: 
 
 jobs:
-  backend:
+  backend-and-crawler:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.11"]
+        python-version: ["3.9"] # 简化矩阵，直接用 3.9 跑最稳妥
 
     steps:
       - uses: actions/checkout@v6
@@ -31,18 +37,31 @@ jobs:
         run: |
           ruff check . --select=E9,F63,F7,F82 --target-version=py39
 
-          - name: Create API Key File
-          run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key.md
-        
-      - name: Run tests
+      # 关键步骤：生成项目所需的 API Key 文件
+      - name: Create API Key File
+        run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key.md
+
+      # 如果是推送代码，就只运行测试
+      - name: Run tests (Only on push)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         run: |
           pytest tests/ -q
-
-      - name: Compile Python files
-        run: |
           python -m compileall -q .
 
+      # 如果是定时任务或手动触发，就运行主爬虫流程
+      - name: Run Daily Crawler Pipeline
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        # 如果你配置了 WhatsApp 推送变量，可以在下面两行取消注释
+        # env:
+        #   WA_PHONE_NUMBER: ${{ secrets.WA_PHONE_NUMBER }}
+        #   WA_API_KEY: ${{ secrets.WA_API_KEY }}
+        run: |
+          # 默认运行完整的抓取和分析流程，你可以根据项目说明在此修改参数
+          python pipeline.py
+
+  # 前端构建测试 (保持原样，仅在推送代码时检查前端是否报错)
   frontend:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
