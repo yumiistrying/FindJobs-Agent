@@ -31,6 +31,9 @@ jobs:
         run: |
           ruff check . --select=E9,F63,F7,F82 --target-version=py39
 
+          - name: Create API Key File
+          run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key.md
+        
       - name: Run tests
         run: |
           pytest tests/ -q
