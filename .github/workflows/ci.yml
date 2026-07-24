@@ -39,19 +39,19 @@ jobs:
         run: python pipeline.py
 
       - name: Commit and Push Data
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        # always() 确保就算没抓到新数据报错，这一步也会执行；后面限制了只在手动或定时任务时运行
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add jobs.db
-          # 忽略报错：如果没有新数据更新，就不提交
+          # 使用 -A 自动添加所有新增、修改或删除的文件，无视具体文件名
+          git add -A
           git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update job data" && git push) || echo "No changes to commit"
 
       - name: Send Telegram Notification
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        # 同样确保无论成功失败都会给你发消息汇报
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
-          # 确保你在 GitHub Secrets 里存了这两个 Telegram 变量
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        # 这里已经帮你改好了，系统会去运行 send_tg.py
         run: python send_tg.py
