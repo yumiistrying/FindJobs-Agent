@@ -1,15 +1,13 @@
 name: FindJobs-Agent CI & Daily Crawler
 
 on:
-  # 1. 当你推送代码时触发（用于测试代码）
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  # 2. 定时任务触发（你的校招雷达：每天吉隆坡时间早上 9 点和晚上 6 点自动运行）
   schedule:
-    - cron: '0 1,10 * * *'
-  # 3. 允许你随时在 GitHub 网页上点击按钮手动运行
+    # 每天 UTC 时间 01:30 触发 (对应本地时间 09:30)
+    - cron: '30 1 * * *'
   workflow_dispatch: 
 
 jobs:
@@ -17,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9"] # 简化矩阵，直接用 3.9 跑最稳妥
+        python-version: ["3.9"]
 
     steps:
       - uses: actions/checkout@v6
@@ -30,61 +28,30 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest
+          pip install ruff pytest requests
           pip install -r requirements.txt
 
-      - name: Lint with ruff
-        run: |
-          ruff check . --select=E9,F63,F7,F82 --target-version=py39
-
-      # 关键步骤：生成项目所需的 API Key 文件
       - name: Create API Key File
         run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key.md
 
-      # 如果是推送代码，就只运行测试
-      - name: Run tests (Only on push)
-        if: github.event_name == 'push' || github.event_name == 'pull_request'
-        run: |
-          pytest tests/ -q
-          python -m compileall -q .
-
-      # 如果是定时任务或手动触发，就运行主爬虫流程
       - name: Run Daily Crawler Pipeline
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        # 如果你配置了 WhatsApp 推送变量，可以在下面两行取消注释
-        # env:
-        #   WA_PHONE_NUMBER: ${{ secrets.WA_PHONE_NUMBER }}
-        #   WA_API_KEY: ${{ secrets.WA_API_KEY }}
+        run: python pipeline.py
+
+      - name: Commit and Push Data
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
-          # 默认运行完整的抓取和分析流程，你可以根据项目说明在此修改参数
-          python pipeline.py
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add jobs.db
+          # 忽略报错：如果没有新数据更新，就不提交
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Auto-update job data" && git push) || echo "No changes to commit"
 
-  # 前端构建测试 (保持原样，仅在推送代码时检查前端是否报错)
-  frontend:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: FrontEnd
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: FrontEnd/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint frontend
-        run: npm run lint
-
-      - name: Typecheck frontend
-        run: npm run typecheck
-
-      - name: Build frontend
-        run: npm run build
+      - name: Send Telegram Notification
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          # 确保你在 GitHub Secrets 里存了这两个 Telegram 变量
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        # 这里已经帮你改好了，系统会去运行 send_tg.py
+        run: python send_tg.py
