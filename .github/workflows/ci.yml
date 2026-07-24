@@ -32,7 +32,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Create API Key File
-        run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key.md
+        run: echo "${{ secrets.GEMINI_API_KEY }}" > API_key-openai.md
 
       - name: Run Daily Crawler Pipeline
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
