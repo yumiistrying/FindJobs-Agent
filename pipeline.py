@@ -72,8 +72,26 @@ def step1_crawl_jobs(companies: Optional[List[str]] = None) -> Dict[str, Any]:
         '-f', 'crawled_jobs_raw.json'
     ]
     
+    # ==========================================
+    # 🚀 核心修改区域：注入长三角制造/新能源目标企业名单
+    # ==========================================
+    target_companies = [
+        "理想汽车", "中创新航", "天合光能", "恒立液压", 
+        "奇瑞汽车", "伯特利", "三只松鼠", "公牛集团", 
+        "雅莹", "哪吒汽车", "天能电池", "隆基绿能", "晶科能源",
+        "吉利汽车", "博世"
+    ]
+    
+    if companies:
+        # 如果命令行传了公司，就和目标名单合并去重
+        companies = list(set(companies + target_companies))
+    else:
+        # 否则默认直接使用长三角目标名单
+        companies = target_companies
+        
     if companies:
         cmd.extend(['-c'] + companies)
+    # ==========================================
     
     logger.info(f"运行爬虫: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=str(ROOT_DIR))
@@ -93,12 +111,6 @@ def step1_crawl_jobs(companies: Optional[List[str]] = None) -> Dict[str, Any]:
 def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
     """
     步骤2: 使用LLM智能分析（调用job_agent.py）
-    
-    这一步会：
-    - 分析每个岗位的学历要求
-    - 提取专业要求
-    - 从技能库中匹配技能并评分(1-5分)
-    - 分类岗位族(job_level1, job_level2)
     """
     print_banner("步骤 2/3: LLM智能分析提取")
     
@@ -195,8 +207,6 @@ def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
 def step3_prepare_for_website() -> Dict[str, Any]:
     """
     步骤3: 准备网站数据
-    
-    将分析后的CSV转换为网站使用的JSON格式
     """
     print_banner("步骤 3/3: 准备网站数据")
     
@@ -294,10 +304,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python pipeline.py                    # 完整流程（爬取+分析+更新网站）
-  python pipeline.py --crawl-only       # 只爬取，不分析
-  python pipeline.py --analyze-only     # 只分析已爬取的数据
-  python pipeline.py --max-jobs 100     # 只分析前100个岗位（测试用）
+  python pipeline.py                     # 完整流程（爬取+分析+更新网站）
+  python pipeline.py --crawl-only        # 只爬取，不分析
+  python pipeline.py --analyze-only      # 只分析已爬取的数据
+  python pipeline.py --max-jobs 100      # 只分析前100个岗位（测试用）
   python pipeline.py -c tencent amazon  # 只爬取指定公司
         """
     )
