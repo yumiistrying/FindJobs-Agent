@@ -7,8 +7,6 @@
 1. 爬取原始岗位数据 (job_crawler_v2.py)
 2. 智能分析提取 (job_agent.py) - 使用LLM提取学历、技能、评分等
 3. 生成网站可用数据
-
-这个脚本整合了爬虫和智能分析两个步骤！
 """
 
 import argparse
@@ -43,7 +41,6 @@ def backup_existing_data():
     """备份现有数据"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    # 备份原始JSON
     raw_file = ROOT_DIR / 'crawled_jobs_raw.json'
     if raw_file.exists():
         backup = ROOT_DIR / f'backup/crawled_jobs_raw_{timestamp}.json'
@@ -51,7 +48,6 @@ def backup_existing_data():
         shutil.copy(raw_file, backup)
         logger.info(f"📦 备份原始数据: {backup.name}")
     
-    # 备份分析后的CSV
     enriched_file = ROOT_DIR / 'jobs_enriched.csv'
     if enriched_file.exists():
         backup = ROOT_DIR / f'backup/jobs_enriched_{timestamp}.csv'
@@ -73,22 +69,17 @@ def step1_crawl_jobs(companies: Optional[List[str]] = None) -> Dict[str, Any]:
     ]
     
     # ==========================================
-    # 🚀 核心修改区域：注入长三角制造/新能源目标企业名单
+    # 🚀 核心修改区域：注入城市与岗位关键词，取消固定公司限制
     # ==========================================
-    target_companies = [
-        "理想汽车", "中创新航", "天合光能", "恒立液压", 
-        "奇瑞汽车", "伯特利", "三只松鼠", "公牛集团", 
-        "雅莹", "哪吒汽车", "天能电池", "隆基绿能", "晶科能源",
-        "吉利汽车", "博世"
-    ]
+    target_cities = ["常州", "芜湖", "嘉兴", "慈溪", "湖州", "无锡"]
+    # 加入 "校招" 或 "2027" 确保匹配你的应届生身份
+    target_keywords = ["数据分析", "数字化运营", "市场企划", "出海", "管培生", "校招"]
     
-    if companies:
-        # 如果命令行传了公司，就和目标名单合并去重
-        companies = list(set(companies + target_companies))
-    else:
-        # 否则默认直接使用长三角目标名单
-        companies = target_companies
-        
+    # 假设爬虫脚本接收 --city 和 --keyword 参数 (用逗号分隔)
+    cmd.extend(['--city', ','.join(target_cities)])
+    cmd.extend(['--keyword', ','.join(target_keywords)])
+    
+    # 如果命令行依然手动传入了具体公司，则追加搜索
     if companies:
         cmd.extend(['-c'] + companies)
     # ==========================================
@@ -96,7 +87,6 @@ def step1_crawl_jobs(companies: Optional[List[str]] = None) -> Dict[str, Any]:
     logger.info(f"运行爬虫: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=str(ROOT_DIR))
     
-    # 读取结果
     raw_file = ROOT_DIR / 'crawled_jobs_raw.json'
     if raw_file.exists():
         with open(raw_file, 'r', encoding='utf-8') as f:
@@ -119,18 +109,15 @@ def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
         logger.error("❌ 未找到原始数据文件")
         return {'success': False}
     
-    # 读取原始数据
     with open(raw_file, 'r', encoding='utf-8') as f:
         jobs = json.load(f)
     
     total_jobs = len(jobs)
     logger.info(f"📊 待分析岗位总数: {total_jobs}")
     
-    # 如果指定了最大数量，截取部分数据
     if max_jobs and max_jobs < total_jobs:
-        logger.info(f"⚠️  将只分析前 {max_jobs} 个岗位（完整分析请移除 --max-jobs 参数）")
+        logger.info(f"⚠️  将只分析前 {max_jobs} 个岗位")
         jobs = jobs[:max_jobs]
-        # 保存截取后的数据
         temp_file = ROOT_DIR / 'temp_jobs_for_analysis.json'
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(jobs, f, ensure_ascii=False, indent=2)
@@ -140,7 +127,6 @@ def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
     
     output_file = ROOT_DIR / 'jobs_enriched.csv'
     
-    # 调用 job_agent.py 进行智能分析
     cmd = [
         sys.executable,
         str(ROOT_DIR / 'job_agent.py'),
@@ -148,36 +134,23 @@ def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
         '--output-file', str(output_file),
         '--min-skills', '3',
         '--max-skills', '10',
-        '--max-workers', '5',  # 控制并发，避免API限流
+        '--max-workers', '5',
     ]
     
     logger.info("运行智能分析: job_agent.py")
-    logger.info(f"输入文件: {input_file}")
-    logger.info(f"输出文件: {output_file}")
-    logger.info("")
-    logger.info("🤖 正在调用LLM分析（这可能需要较长时间）...")
-    logger.info("   - 提取学历要求")
-    logger.info("   - 提取专业要求")
-    logger.info("   - 匹配技能并评分(1-5分)")
-    logger.info("   - 分类岗位族")
-    logger.info("")
+    logger.info("🤖 正在调用LLM分析...")
     
     try:
-        result = subprocess.run(cmd, cwd=str(ROOT_DIR), timeout=7200)  # 2小时超时
+        result = subprocess.run(cmd, cwd=str(ROOT_DIR), timeout=7200)
         
         if output_file.exists():
-            # 读取分析后的数据统计
             import pandas as pd
             df = pd.read_csv(output_file)
-            
-            # 统计有技能标签的岗位
             has_skills = df['skill_tags'].notna().sum()
             
             logger.info("✅ 智能分析完成")
             logger.info(f"   - 总岗位数: {len(df)}")
-            logger.info(f"   - 有技能标签: {has_skills}")
-
-            # 同步进 SQLite（API 的一等读源；CSV 保留作导出）
+            
             try:
                 import storage
                 written = storage.upsert_jobs(
@@ -185,19 +158,15 @@ def step2_analyze_with_llm(max_jobs: Optional[int] = None) -> Dict[str, Any]:
                 )
                 logger.info(f"   - 已同步 {written} 个岗位到 jobs.db")
             except Exception as exc:
-                logger.warning(f"   - 同步 jobs.db 失败（不影响 CSV 输出）: {exc}")
+                logger.warning(f"   - 同步 jobs.db 失败: {exc}")
             
-            return {
-                'success': True,
-                'count': len(df),
-                'file': str(output_file),
-            }
+            return {'success': True, 'count': len(df), 'file': str(output_file)}
         else:
             logger.error("❌ 分析失败: 未生成输出文件")
             return {'success': False}
             
     except subprocess.TimeoutExpired:
-        logger.error("❌ 分析超时（超过2小时）")
+        logger.error("❌ 分析超时")
         return {'success': False}
     except Exception as e:
         logger.error(f"❌ 分析失败: {e}")
@@ -214,24 +183,17 @@ def step3_prepare_for_website() -> Dict[str, Any]:
     output_json = ROOT_DIR / 'all_companies_jobs.json'
     
     if not enriched_csv.exists():
-        # 如果没有分析后的数据，使用原始数据
         raw_json = ROOT_DIR / 'crawled_jobs_raw.json'
         if raw_json.exists():
-            logger.warning("⚠️  未找到分析后的数据，将使用原始数据")
             shutil.copy(raw_json, output_json)
             with open(output_json, 'r', encoding='utf-8') as f:
                 jobs = json.load(f)
-            logger.info(f"📁 网站数据已更新: {output_json.name} ({len(jobs)} 个岗位)")
             return {'success': True, 'count': len(jobs), 'enriched': False}
-        else:
-            logger.error("❌ 未找到任何数据文件")
-            return {'success': False}
+        return {'success': False}
     
-    # 读取分析后的CSV
     import pandas as pd
     df = pd.read_csv(enriched_csv)
     
-    # 转换为JSON格式（保持与原有格式兼容）
     jobs = []
     for _, row in df.iterrows():
         job = {
@@ -246,7 +208,6 @@ def step3_prepare_for_website() -> Dict[str, Any]:
             'job_requirements': str(row.get('job_requirements', '')),
             'apply_url': str(row.get('apply_url', '')),
             'source_url': str(row.get('source_url', '')),
-            # 智能分析提取的字段
             'min_degree': str(row.get('min_degree', '')),
             'degree_priority': str(row.get('degree_priority', '')),
             'major_requirement': str(row.get('major_requirement_text', '')),
@@ -256,110 +217,42 @@ def step3_prepare_for_website() -> Dict[str, Any]:
         }
         jobs.append(job)
     
-    # 保存JSON
     with open(output_json, 'w', encoding='utf-8') as f:
         json.dump(jobs, f, ensure_ascii=False, indent=2)
     
-    logger.info(f"✅ 网站数据已更新: {output_json.name}")
-    logger.info(f"   - 总岗位数: {len(jobs)}")
-    
-    # 统计
-    companies = {}
-    for job in jobs:
-        company = job['company_name']
-        companies[company] = companies.get(company, 0) + 1
-    
-    logger.info("\n📊 按公司统计:")
-    for company, count in sorted(companies.items(), key=lambda x: -x[1]):
-        has_skills = sum(1 for j in jobs if j['company_name'] == company and j.get('skill_tags'))
-        logger.info(f"   {company:15}: {count:5} 个 (含技能标签: {has_skills})")
-    
+    logger.info(f"✅ 网站数据已更新: {output_json.name} ({len(jobs)} 个)")
     return {'success': True, 'count': len(jobs), 'enriched': True}
 
 
 def show_next_steps():
-    """显示下一步操作"""
     print_banner("下一步操作")
-    
-    print("""
-数据更新完成！请按以下步骤操作：
-
-1. 重启后端服务:
-   pkill -f "python api_server.py"
-   PORT=5001 python api_server.py &
-
-2. 打开网站查看:
-   http://localhost:8080
-
-3. 网站将显示:
-   - 岗位列表（含技能标签和评分）
-   - 学历要求、专业要求
-   - 岗位分类(job_level1/job_level2)
-""")
+    print("数据更新完成！可重启前端服务查看。")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='岗位数据处理流水线',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python pipeline.py                     # 完整流程（爬取+分析+更新网站）
-  python pipeline.py --crawl-only        # 只爬取，不分析
-  python pipeline.py --analyze-only      # 只分析已爬取的数据
-  python pipeline.py --max-jobs 100      # 只分析前100个岗位（测试用）
-  python pipeline.py -c tencent amazon  # 只爬取指定公司
-        """
-    )
-    
-    parser.add_argument('-c', '--companies', nargs='*', default=None,
-                        help='指定要爬取的公司')
-    parser.add_argument('--crawl-only', action='store_true',
-                        help='只执行爬取步骤')
-    parser.add_argument('--analyze-only', action='store_true',
-                        help='只执行分析步骤（使用已有的原始数据）')
-    parser.add_argument('--max-jobs', type=int, default=None,
-                        help='限制分析的岗位数量（用于测试）')
-    parser.add_argument('--no-backup', action='store_true',
-                        help='不备份现有数据')
-    
+    parser = argparse.ArgumentParser(description='岗位数据处理流水线')
+    parser.add_argument('-c', '--companies', nargs='*', default=None, help='指定要爬取的公司')
+    parser.add_argument('--crawl-only', action='store_true')
+    parser.add_argument('--analyze-only', action='store_true')
+    parser.add_argument('--max-jobs', type=int, default=None)
+    parser.add_argument('--no-backup', action='store_true')
     args = parser.parse_args()
     
     print_banner("岗位数据处理流水线")
     
-    print("""
-本流水线包含三个步骤:
-  1. 爬取原始岗位数据
-  2. LLM智能分析提取（学历、技能评分、岗位分类）
-  3. 生成网站可用数据
-""")
-    
-    # 备份
     if not args.no_backup:
         backup_existing_data()
     
-    # 执行步骤
     if args.analyze_only:
-        # 只分析
         result2 = step2_analyze_with_llm(args.max_jobs)
-        if result2['success']:
-            step3_prepare_for_website()
+        if result2['success']: step3_prepare_for_website()
     elif args.crawl_only:
-        # 只爬取
         step1_crawl_jobs(args.companies)
     else:
-        # 完整流程
         result1 = step1_crawl_jobs(args.companies)
         if result1['success']:
             result2 = step2_analyze_with_llm(args.max_jobs)
-            if result2['success']:
-                step3_prepare_for_website()
-            else:
-                logger.warning("智能分析失败，使用原始数据")
-                step3_prepare_for_website()
-        else:
-            logger.error("爬取失败，流水线中止")
-            return
+            step3_prepare_for_website()
     
     show_next_steps()
 
